@@ -1,134 +1,65 @@
-# climate_modeling_app/app.py
-
 import streamlit as st
 import pandas as pd
-import numpy as np
-import folium
-from folium.plugins import HeatMap
-from streamlit_folium import folium_static
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import train_test_split
-import shap
 import matplotlib.pyplot as plt
-import base64
-import smtplib
-from email.message import EmailMessage
-import joblib
+from bertopic import BERTopic
+import plotly.express as px
 import os
 
-# -------------------- CONFIGURATION --------------------
-st.set_page_config(layout="wide", page_title="Climate Change Emission Predictor")
+# App Title
+st.set_page_config(page_title="Climate Change Sentiment & Topics", layout="wide")
+st.title("🌍 Climate Change Sentiment & Topic Modeling (NASA Facebook Comments)")
 
-# -------------------- HELPER FUNCTIONS --------------------
-@st.cache_data
-
+# Load Data and Model
+@st.cache_resource
 def load_data():
-    train = pd.read_csv("data/train.csv")
-    test = pd.read_csv("data/test.csv")
-    return train, test
-
-def preprocess(df):
-    df = df.copy()
-    df = df.dropna(axis=1, thresh=int(0.9*len(df)))
-    df = df.select_dtypes(include=[np.number])
+    df = pd.read_csv("model/sentiment.csv")
+    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+    df['month'] = df['date'].dt.to_period("M").astype(str)
     return df
 
-def build_model(X_train, y_train):
-    model = RandomForestRegressor(n_estimators=200, max_depth=12, random_state=42)
-    model.fit(X_train, y_train)
-    return model
+@st.cache_resource
+def load_topic_model():
+    return BERTopic.load("model/topic_model.bin")
 
-def predict_emission(model, X):
-    return model.predict(X)
+df = load_data()
+topic_model = load_topic_model()
 
-def visualize_shap(model, X):
-    explainer = shap.TreeExplainer(model)
-    shap_values = explainer.shap_values(X)
-    shap.summary_plot(shap_values, X, plot_type="bar", show=False)
-    st.pyplot(bbox_inches='tight')
+# Sidebar filters
+with st.sidebar:
+    st.header("🔍 Filters")
+    sentiments = st.multiselect("Select Sentiment", df['transformer_sentiment'].unique(), default=df['transformer_sentiment'].unique())
+    top_n = st.slider("Top N Topics to Display", 3, 10, 5)
 
+filtered_df = df[df['transformer_sentiment'].isin(sentiments)]
 
-def generate_map(df):
-    fmap = folium.Map(location=[-0.5, 29.3], zoom_start=7)
-    heat_data = [[row["latitude"], row["longitude"], row["emission"]] for index, row in df.iterrows() if not np.isnan(row["emission"])]
-    HeatMap(heat_data).add_to(fmap)
-    return fmap
+# Topic trend analysis
+st.subheader("📈 Topic Trends Over Time")
+topic_trend = filtered_df.groupby(['month', 'topic']).size().reset_index(name='count')
+pivot = topic_trend.pivot(index='month', columns='topic', values='count').fillna(0)
+pivot_percent = pivot.div(pivot.sum(axis=1), axis=0) * 100
+top_topics = pivot.sum().sort_values(ascending=False).head(top_n).index
 
-def send_email(receiver_email, subject, body):
-    EMAIL = os.environ.get("EMAIL")
-    PASSWORD = os.environ.get("EMAIL_PASSWORD")
-    if not EMAIL or not PASSWORD:
-        st.error("Email credentials not set in environment variables.")
-        return
+fig = px.line(pivot_percent[top_topics].reset_index(), x='month', y=top_topics, markers=True)
+st.plotly_chart(fig, use_container_width=True)
 
-    msg = EmailMessage()
-    msg.set_content(body)
-    msg["Subject"] = subject
-    msg["From"] = EMAIL
-    msg["To"] = receiver_email
+# Topic keywords section
+st.subheader("🧠 Topic Keywords")
+for topic_id in top_topics:
+    words = topic_model.get_topic(topic_id)
+    st.markdown(f"**Topic {topic_id}**: " + ", ".join([w[0] for w in words]))
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-        smtp.login(EMAIL, PASSWORD)
-        smtp.send_message(msg)
-        st.success("Email sent successfully!")
+# Individual comment viewer
+st.subheader("📝 Sample Comments by Topic")
+selected_topic = st.selectbox("Choose a Topic", top_topics)
+st.dataframe(filtered_df[filtered_df['topic'] == selected_topic][['date', 'clean_text', 'transformer_sentiment']].head(10))
 
-# -------------------- MAIN STREAMLIT APP --------------------
+# Optional: Download CSV
+st.download_button("📥 Download Processed Data", df.to_csv(index=False), file_name="nasa_topic_output.csv")
 
-train_raw, test_raw = load_data()
-
-st.title("🌍 Climate Change Modeling App")
-st.markdown("Predict CO₂ emissions using ML + visualize hotspots + send results via email")
-
-st.sidebar.header("Navigation")
-section = st.sidebar.radio("Go to:", ["EDA & Map", "Model Training", "Predict Emission", "Send Email"])
-
-if section == "EDA & Map":
-    st.header("📊 Exploratory Data Analysis + Map")
-    st.write("Train shape:", train_raw.shape)
-    st.write("Null values:", train_raw.isnull().sum().sort_values(ascending=False).head())
-    st.subheader("📍 Geo Heatmap of Emissions")
-    try:
-        fmap = generate_map(train_raw[['latitude', 'longitude', 'emission']].dropna())
-        folium_static(fmap)
-    except Exception as e:
-        st.error(f"Map failed: {e}")
-
-elif section == "Model Training":
-    st.header("🧠 Train ML Model")
-    df = preprocess(train_raw)
-    X = df.drop("emission", axis=1)
-    y = df["emission"]
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
-    model = build_model(X_train, y_train)
-    joblib.dump(model, "model/rf_model.pkl")
-    joblib.dump(scaler, "model/scaler.pkl")
-
-    y_pred = model.predict(X_test)
-    st.write(f"MAE: {mean_absolute_error(y_test, y_pred):.2f}")
-    st.write(f"MSE: {mean_squared_error(y_test, y_pred):.2f}")
-    st.write(f"R²: {r2_score(y_test, y_pred):.2f}")
-    st.subheader("📈 SHAP Feature Importance")
-    visualize_shap(model, pd.DataFrame(X_test, columns=X.columns))
-
-elif section == "Predict Emission":
-    st.header("🚀 Predict Emission")
-    test_clean = preprocess(test_raw)
-    model = joblib.load("model/rf_model.pkl")
-    scaler = joblib.load("model/scaler.pkl")
-    X_test = scaler.transform(test_clean)
-    preds = model.predict(X_test)
-    test_raw["predicted_emission"] = preds
-    st.dataframe(test_raw[["latitude", "longitude", "predicted_emission"]].head(20))
-    st.download_button("Download Predictions", data=test_raw.to_csv(index=False), file_name="predictions.csv")
-
-elif section == "Send Email":
-    st.header("📧 Send Email with Prediction")
-    email_to = st.text_input("Receiver Email")
-    email_subject = st.text_input("Subject", value="Climate Emission Prediction Results")
-    email_body = st.text_area("Email Body", value="Please find the attached prediction summary.")
+# Email section (optional)
+with st.expander("📧 Email this analysis"):
+    to_email = st.text_input("Enter recipient email")
     if st.button("Send Email"):
-        send_email(email_to, email_subject, email_body)
+        from utils.email_helper import send_email
+        send_email(to_email, subject="NASA Climate Analysis", attachment_path="model/sentiment.csv")
+        st.success("Email sent!")
