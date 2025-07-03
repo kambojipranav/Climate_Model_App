@@ -9,27 +9,41 @@ from collections import defaultdict
 # ---------- Custom Styling ----------
 st.markdown("""
 <style>
+.footer {
+    font-size: 32px;           /* Make it big */
+    font-weight: bold;
+    color: #ffffff;            /* You can change this */
+    text-align: center;        /* Center the text */
+    padding: 20px;
+    margin-top: 40px;
+}
+
 body {
-    background: linear-gradient(to right, #ffecd2, #fcb69f);
-    color: #333;
-    font-family: 'Segoe UI', sans-serif;
+    background: linear-gradient(to right, #00FFFF, #FFC300);
+    color: white;
+    font-size: 20px; /* increase global font size */
 }
 .stApp {
-    background: linear-gradient(to right, #fdfbfb, #ebedee);
+    background: linear-gradient(to right, #eb1d02, #6790f0);
 }
-h1, h2, h3, h4 {
-    color: #102542;
+h1 {
+    font-size: 40px !important;
+    color: #00ffd5;
 }
-.sidebar .sidebar-content {
-    background-color: #f0f2f6;
+h2 {
+    font-size: 32px !important;
 }
-.footer {
-    font-size: 26px;
-    font-weight: bold;
-    text-align: center;
-    color: #102542;
-    padding: 30px 0 10px 0;
-    margin-top: 50px;
+h3 {
+    font-size: 26px !important;
+}
+h4 {
+    font-size: 22px !important;
+}
+div[data-testid="stMarkdownContainer"] p {
+    font-size: 18px !important;
+}
+.css-1d391kg {
+    background-color: rgba(255, 255, 255, 0.1);
 }
 </style>
 """, unsafe_allow_html=True)
