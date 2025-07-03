@@ -3,5 +3,3 @@ pandas
 plotly
 scikit-learn
 matplotlib
-keras
-tensorflow
